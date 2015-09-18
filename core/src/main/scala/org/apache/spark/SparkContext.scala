@@ -2604,6 +2604,12 @@ object SparkContext extends Logging {
         scheduler.initialize(backend)
         (backend, scheduler)
 
+      case COOK_REGEX(user, pass, url, port) =>
+        val scheduler = new TaskSchedulerImpl(sc)
+        val backend = new CoarseCookSchedulerBackend(scheduler, sc, url, port.toInt, user, pass)
+        scheduler.initialize(backend)
+        (backend, scheduler)
+
       case LOCAL_N_REGEX(threads) =>
         def localCpuCount: Int = Runtime.getRuntime.availableProcessors()
         // local[*] estimates the number of cores on the machine; local[N] uses exactly N threads.
@@ -2753,6 +2759,8 @@ private object SparkMasterRegex {
   val MESOS_REGEX = """mesos://(.*)""".r
   // Regular expression for connection to Simr cluster
   val SIMR_REGEX = """simr://(.*)""".r
+  // Regular expression for connection to Cook Scheduler
+  val COOK_REGEX = """cook://(?:(.*):(.*)@)?(.*):([0-9]+)""".r
 }
 
 /**
