@@ -2555,6 +2555,8 @@ object SparkContext extends Logging {
     val MESOS_REGEX = """(mesos|zk)://.*""".r
     // Regular expression for connection to Simr cluster
     val SIMR_REGEX = """simr://(.*)""".r
+    // Regular expression for connection to Cook Scheduler
+    val COOK_REGEX = """cook://(?:(.*):(.*)@)?(.*):([0-9]+)""".r
 
     // When running locally, don't try to re-execute tasks on failure.
     val MAX_LOCAL_TASK_FAILURES = 1
@@ -2563,6 +2565,12 @@ object SparkContext extends Logging {
       case "local" =>
         val scheduler = new TaskSchedulerImpl(sc, MAX_LOCAL_TASK_FAILURES, isLocal = true)
         val backend = new LocalBackend(sc.getConf, scheduler, 1)
+        scheduler.initialize(backend)
+        (backend, scheduler)
+
+      case COOK_REGEX(user, pass, url, port) =>
+        val scheduler = new TaskSchedulerImpl(sc)
+        val backend = new CoarseCookSchedulerBackend(scheduler, sc, url, port.toInt, user, pass)
         scheduler.initialize(backend)
         (backend, scheduler)
 
