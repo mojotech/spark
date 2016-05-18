@@ -66,4 +66,13 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
 
     assert(backend.isReady())
   }
+
+  test("cook supports killing executors") {
+    val taskScheduler = mock[TaskSchedulerImpl]
+    when(taskScheduler.sc).thenReturn(sc)
+
+    val backend = createSchedulerBackend(taskScheduler)
+
+    assert(!backend.executorsToJobs.isEmpty)
+  }
 }

@@ -20,9 +20,10 @@ package org.apache.spark.scheduler.cluster.cook
 import java.io.{ BufferedWriter, FileWriter }
 import java.net.URI
 import java.nio.file.{ Files, Paths }
-import java.util.UUID
+import java.util.{ UUID, List => JList }
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.{ HashMap }
 
 import org.apache.mesos._
 import org.apache.mesos.Protos._
@@ -99,7 +100,7 @@ private[spark] class CoarseCookSchedulerBackend(
     }
 
   // TODO do we need to do something smarter about the security manager?
-  val sparkMesosScheduler =
+  val mesosBackend =
     new CoarseMesosSchedulerBackend(scheduler, sc, "", sc.env.securityManager)
 
   val jobClient = {
@@ -117,6 +118,7 @@ private[spark] class CoarseCookSchedulerBackend(
   }
 
   var runningJobUUIDs = Set[UUID]()
+  var executorsToJobs = HashMap[String, UUID]()
 
   val jobListener = new CJobListener {
     // These are called serially so don't need to worry about race conditions
@@ -139,18 +141,24 @@ private[spark] class CoarseCookSchedulerBackend(
     import CoarseCookSchedulerBackend.fetchUri
 
     val jobId = UUID.randomUUID()
+
     executorUuidWriter(jobId)
     logInfo(s"Creating job with id: $jobId")
+
+    val slaveId = SlaveID.newBuilder().setValue(jobId.toString)
+
     val fakeOffer = Offer.newBuilder()
       .setId(OfferID.newBuilder().setValue("Cook-id"))
       .setFrameworkId(FrameworkID.newBuilder().setValue("Cook"))
       .setHostname("$(hostname)")
-      .setSlaveId(SlaveID.newBuilder().setValue(jobId.toString))
+      .setSlaveId(slaveId)
       .build()
-    val taskId = sparkMesosScheduler.newMesosTaskId()
-    val commandInfo = sparkMesosScheduler.createCommand(fakeOffer, numCores, taskId)
+
+    val taskId = mesosBackend.newMesosTaskId()
+    val commandInfo = mesosBackend.createCommand(fakeOffer, numCores, taskId)
     val commandString = commandInfo.getValue
     val environmentInfo = commandInfo.getEnvironment
+
     // Note that it is critical to export these variables otherwise when
     // we invoke the spark scripts, our values will not be picked up
     val environment =
@@ -166,6 +174,7 @@ private[spark] class CoarseCookSchedulerBackend(
                        .build()
        }
     logDebug(s"command: $commandString")
+
     val remoteHdfsConf = conf.get("spark.executor.cook.hdfs.conf.remote", "")
     val remoteConfFetch = if (remoteHdfsConf.nonEmpty) {
       val name = Paths.get(remoteHdfsConf).getFileName
@@ -184,15 +193,19 @@ private[spark] class CoarseCookSchedulerBackend(
 
     val cmds = remoteConfFetch ++ environment ++ Seq(commandString, cleanup)
 
-    new Job.Builder()
+    val job = new Job.Builder()
       .setUUID(jobId)
       .setEnv(environment.asJava)
       .setUris(uris.asJava)
       .setCommand(cmds.mkString("; "))
-      .setMemory(sparkMesosScheduler.calculateTotalMemory(sc))
+      .setMemory(mesosBackend.calculateTotalMemory(sc))
       .setCpus(numCores)
       .setPriority(priority)
       .build()
+
+    executorsToJobs(slaveId.toString + "/" + taskId.toString) = jobId
+
+    job
   }
 
   def createRemainingJobs(): List[Job] = {
@@ -210,7 +223,13 @@ private[spark] class CoarseCookSchedulerBackend(
     jobClient.submit(jobs.asJava, jobListener)
   }
 
-  // TODO we should consider making this async, because if there are issues with cook it'll
+  override def doKillExecutors(executorIds: Seq[String]): Boolean = {
+    val uuids = executorIds.map(x => executorsToJobs(x)).asJavaCollection
+    jobClient.abort(uuids)
+    true
+  }
+
+  // todo we should consider making this async, because if there are issues with cook it'll
   // just block the spark shell completely. We can block if they submit something (we don't
   // want to get into thread management issues)
   override def start() {
