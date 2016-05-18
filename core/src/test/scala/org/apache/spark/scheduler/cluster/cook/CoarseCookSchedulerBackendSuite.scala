@@ -55,6 +55,8 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
       .setAppName("test-cook-dynamic-alloc")
       .setSparkHome("/path")
 
+    sparkConf.set("spark.cores.max", "2")
+
     sc = new SparkContext(sparkConf)
   }
 
@@ -65,5 +67,15 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     val backend = createSchedulerBackend(taskScheduler)
 
     assert(backend.isReady())
+  }
+
+  test("cook supports killing executors") {
+    val taskScheduler = mock[TaskSchedulerImpl]
+    when(taskScheduler.sc).thenReturn(sc)
+
+    val backend = createSchedulerBackend(taskScheduler)
+    var executorIds = Seq(backend.executorsToJobs.keySet.head)
+
+    assert(backend.doKillExecutors(executorIds))
   }
 }
