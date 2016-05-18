@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.scheduler
+package org.apache.spark.scheduler.cluster.cook
 
 import java.io.{ BufferedWriter, FileWriter }
 import java.net.URI
@@ -28,6 +28,8 @@ import org.apache.mesos._
 import org.apache.mesos.Protos._
 
 import org.apache.spark.{Logging, SparkContext}
+
+import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend
 import org.apache.spark.scheduler.cluster.mesos.CoarseMesosSchedulerBackend
 
