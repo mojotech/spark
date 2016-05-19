@@ -226,6 +226,7 @@ private[spark] class CoarseCookSchedulerBackend(
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
     val uuids = executorIds.map(x => executorsToJobs(x))
     jobClient.abort(uuids.asJavaCollection)
+    for (executorId <- executorIds) { executorsToJobs.remove(executorId) }
     true
   }
 
