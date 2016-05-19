@@ -74,8 +74,11 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    var executorIds = Seq(backend.executorsToJobs.keySet.head)
+    val executorId = backend.executorsToJobs.keySet.head
+    var executorIds = Seq(executorId)
 
     assert(backend.doKillExecutors(executorIds))
+
+    assert(!backend.executorsToJobs.contains(executorId))
   }
 }
