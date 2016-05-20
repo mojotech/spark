@@ -120,6 +120,10 @@ private[spark] class CoarseCookSchedulerBackend(
   var runningJobUUIDs = Set[UUID]()
   var executorsToJobs = HashMap[String, UUID]()
 
+  private var jobLimitOption: Option[Int] = None
+
+  private[cook] def executorLimit: Int = jobLimitOption.getOrElse(Int.MaxValue)
+
   val jobListener = new CJobListener {
     // These are called serially so don't need to worry about race conditions
     def onStatusUpdate(job : Job) {
@@ -210,23 +214,34 @@ private[spark] class CoarseCookSchedulerBackend(
 
   def createRemainingJobs(): List[Job] = {
     def loop(coresRemaining: Int, jobs: List[Job]): List[Job] =
-      if (coresRemaining <= 0) jobs
-      else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
-      else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
-    loop(maxCores - totalCoresRequested, Nil).reverse
+      if (jobs.size == executorLimit) jobs
+      else
+        if (maxCoresPerJob <= 0) jobs
+        else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
+        else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
+
+    loop(maxCores - totalCoresRequested, List()).reverse
   }
 
   def requestRemainingCores() : Unit = {
     val jobs = createRemainingJobs()
-    totalCoresRequested += jobs.map(_.getCpus.toInt).sum
-    runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
-    jobClient.submit(jobs.asJava, jobListener)
+
+    if (!jobs.isEmpty)
+      totalCoresRequested += jobs.map(_.getCpus.toInt).sum
+      runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
+      jobClient.submit(jobs.asJava, jobListener)
   }
 
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
     val uuids = executorIds.map(x => executorsToJobs(x))
     jobClient.abort(uuids.asJavaCollection)
     for (executorId <- executorIds) { executorsToJobs.remove(executorId) }
+    true
+  }
+
+  override def doRequestTotalExecutors(requestedTotal: Int): Boolean = {
+    logInfo("Capping the total amount of executors to " + requestedTotal)
+    jobLimitOption = Some(requestedTotal)
     true
   }
 
