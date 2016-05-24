@@ -90,9 +90,14 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     val executorId = backend.executorsToJobs.keySet.head
     var executorIds = Seq(executorId)
 
-    assert(backend.doRequestTotalExecutors(0))
+    backend.doKillExecutors(executorIds)
+    assert(backend.executorsToJobs.isEmpty)
 
+    assert(backend.doRequestTotalExecutors(0))
     assert(backend.executorLimit == 0)
-    // assert(backend.executorsToJobs.isEmpty)
+
+    backend.requestRemainingCores()
+
+    assert(backend.executorsToJobs.isEmpty)
   }
 }

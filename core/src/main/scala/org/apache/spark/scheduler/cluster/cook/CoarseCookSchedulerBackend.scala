@@ -214,17 +214,22 @@ private[spark] class CoarseCookSchedulerBackend(
 
   def createRemainingJobs(): List[Job] = {
     def loop(coresRemaining: Int, jobs: List[Job]): List[Job] =
-      if (coresRemaining <= 0) jobs
-      else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
-      else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
-    loop(maxCores - totalCoresRequested, Nil).reverse
+      if (jobs.size == executorLimit) jobs
+      else
+        if (maxCoresPerJob <= 0) jobs
+        else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
+        else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
+
+    loop(maxCores - totalCoresRequested, List()).reverse
   }
 
   def requestRemainingCores() : Unit = {
     val jobs = createRemainingJobs()
-    totalCoresRequested += jobs.map(_.getCpus.toInt).sum
-    runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
-    jobClient.submit(jobs.asJava, jobListener)
+
+    if (!jobs.isEmpty)
+      totalCoresRequested += jobs.map(_.getCpus.toInt).sum
+      runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
+      jobClient.submit(jobs.asJava, jobListener)
   }
 
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
