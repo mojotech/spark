@@ -74,12 +74,12 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    val executorId = backend.executorsToJobs.keySet.head
+    val executorId = backend.executorsToJobIds.keySet.head
     var executorIds = Seq(executorId)
 
     assert(backend.doKillExecutors(executorIds))
 
-    assert(!backend.executorsToJobs.contains(executorId))
+    assert(!backend.executorsToJobIds.contains(executorId))
   }
 
   test("cook supports scaling executors down") {
@@ -87,17 +87,17 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    val executorId = backend.executorsToJobs.keySet.head
+    val executorId = backend.executorsToJobIds.keySet.head
     var executorIds = Seq(executorId)
 
     backend.doKillExecutors(executorIds)
-    assert(backend.executorsToJobs.isEmpty)
+    assert(backend.executorsToJobIds.isEmpty)
 
     assert(backend.doRequestTotalExecutors(0))
     assert(backend.executorLimit == 0)
 
     backend.requestRemainingCores()
 
-    assert(backend.executorsToJobs.isEmpty)
+    assert(backend.executorsToJobIds.isEmpty)
   }
 }

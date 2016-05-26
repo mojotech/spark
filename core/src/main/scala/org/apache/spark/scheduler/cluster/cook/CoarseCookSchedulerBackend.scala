@@ -118,7 +118,7 @@ private[spark] class CoarseCookSchedulerBackend(
   }
 
   var runningJobUUIDs = Set[UUID]()
-  var executorsToJobs = HashMap[String, UUID]()
+  var executorsToJobIds = HashMap[String, UUID]()
 
   private var jobLimitOption: Option[Int] = None
 
@@ -207,7 +207,7 @@ private[spark] class CoarseCookSchedulerBackend(
       .setPriority(priority)
       .build()
 
-    executorsToJobs(slaveId.toString + "/" + taskId.toString) = jobId
+    executorsToJobIds(slaveId.toString + "/" + taskId.toString) = jobId
 
     job
   }
@@ -233,9 +233,9 @@ private[spark] class CoarseCookSchedulerBackend(
   }
 
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
-    val uuids = executorIds.map(x => executorsToJobs(x))
+    val uuids = executorIds.map(x => executorsToJobIds(x))
     jobClient.abort(uuids.asJavaCollection)
-    for (executorId <- executorIds) { executorsToJobs.remove(executorId) }
+    for (executorId <- executorIds) { executorsToJobIds.remove(executorId) }
     true
   }
 
