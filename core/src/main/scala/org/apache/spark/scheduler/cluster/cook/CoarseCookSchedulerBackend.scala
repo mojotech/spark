@@ -226,10 +226,10 @@ private[spark] class CoarseCookSchedulerBackend(
   def requestRemainingCores() : Unit = {
     val jobs = createRemainingJobs()
 
-    if (!jobs.isEmpty)
-      totalCoresRequested += jobs.map(_.getCpus.toInt).sum
-      runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
-      jobClient.submit(jobs.asJava, jobListener)
+    totalCoresRequested += jobs.map(_.getCpus.toInt).sum
+    runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
+
+    jobClient.submit(jobs.asJava, jobListener)
   }
 
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
