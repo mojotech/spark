@@ -34,7 +34,7 @@ import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend
 import org.apache.spark.scheduler.cluster.mesos.CoarseMesosSchedulerBackend
 
-import com.twosigma.cook.jobclient.{Job, FetchableURI, JobClient, JobListener => CJobListener}
+import com.twosigma.cook.jobclient.{Job, FetchableURI, JobClient, JobClientException, JobListener => CJobListener}
 
 object CoarseCookSchedulerBackend {
   def fetchUri(uri: String): String =
@@ -234,8 +234,14 @@ private[spark] class CoarseCookSchedulerBackend(
 
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
     val uuids = executorIds.map(x => executorsToJobIds(x))
-    jobClient.abort(uuids.asJavaCollection)
-    for (executorId <- executorIds) { executorsToJobIds.remove(executorId) }
+
+    try {
+      jobClient.abort(uuids.asJavaCollection)
+      for (executorId <- executorIds) { executorsToJobIds.remove(executorId) }
+    } catch {
+      case e: JobClientException => logWarning("Failed to kill an executor")
+    }
+
     true
   }
 

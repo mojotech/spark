@@ -19,6 +19,8 @@ package org.apache.spark.scheduler.cluster.cook
 
 import java.util
 import java.util.Collections
+import java.util.UUID
+import scala.collection.JavaConverters._
 
 import org.apache.mesos.Protos.Value.Scalar
 import org.apache.mesos.Protos._
@@ -33,6 +35,8 @@ import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SecurityManager, SparkFunSuite}
 
 import org.apache.spark.scheduler.cluster.cook
+
+import com.twosigma.cook.jobclient.{ JobClient, JobClientException }
 
 class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     with LocalSparkContext
@@ -99,5 +103,27 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     backend.requestRemainingCores()
 
     assert(backend.executorsToJobIds.isEmpty)
+  }
+
+  test("cook doesn't update executor-job mapping when aborting a job fails") {
+    val execId = "ex1"
+    val jobId = UUID.randomUUID()
+
+    val taskScheduler = mock[TaskSchedulerImpl]
+    when(taskScheduler.sc).thenReturn(sc)
+
+    val jobClientMock = mock[JobClient]
+    when(jobClientMock.abort(List(jobId).asJavaCollection)).thenThrow(mock[JobClientException])
+
+    val backend = new CoarseCookSchedulerBackend(
+      taskScheduler, sc, "127.0.0.1", 12321, "vagrant", "ignorePassword"
+    ) {
+      override val jobClient = jobClientMock
+    }
+
+    backend.executorsToJobIds(execId) = jobId
+
+    assert(backend.doKillExecutors(Seq(execId)))
+    assert(backend.executorsToJobIds.contains(execId))
   }
 }
