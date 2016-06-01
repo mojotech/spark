@@ -82,6 +82,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.doKillExecutors(executorIds))
 
     assert(!backend.executorsToJobIds.contains(executorId))
+    assert(backend.totalFailures == 0)
   }
 
   test("cook supports scaling executors down") {
@@ -97,6 +98,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
 
     assert(backend.doRequestTotalExecutors(0))
     assert(backend.executorLimit == 0)
+    assert(backend.totalFailures == 0)
 
     backend.requestRemainingCores()
 
