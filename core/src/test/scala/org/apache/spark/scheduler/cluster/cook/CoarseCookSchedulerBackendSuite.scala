@@ -97,7 +97,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(!backend.abortedJobIds.contains(job.getUUID))
   }
 
-  test("cook supports scaling executors down") {
+  test("cook supports scaling executors up & down") {
     val taskScheduler = mock[TaskSchedulerImpl]
     when(taskScheduler.sc).thenReturn(sc)
 
@@ -114,7 +114,11 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
 
     backend.requestRemainingCores()
 
-    assert(backend.executorsToJobIds.isEmpty)
+    assert(backend.doRequestTotalExecutors(2))
+    assert(backend.executorLimit == 2)
+    assert(backend.totalFailures == 0)
+
+    assert(backend.runningJobUUIDs.size == 1)
   }
 
   test("cook doesn't update executor-job mapping when aborting a job fails") {
