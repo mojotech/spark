@@ -57,7 +57,8 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
       .setAppName("test-cook-dynamic-alloc")
       .setSparkHome("/path")
 
-    sparkConf.set("spark.cores.max", "2")
+    sparkConf.set("spark.cores.max", "3")
+    sparkConf.set("spark.cook.cores.per.job.max", "1")
 
     sc = new SparkContext(sparkConf)
   }
@@ -77,23 +78,24 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
 
     val backend = createSchedulerBackend(taskScheduler)
     val executorId = backend.executorsToJobIds.keySet.head
+    val jobId = backend.executorsToJobIds(executorId)
     val executorIds = Seq(executorId)
 
-    assert(backend.runningJobUUIDs.size == 1)
+    assert(backend.runningJobUUIDs.size == 3)
     assert(backend.doKillExecutors(executorIds))
 
     assert(!backend.executorsToJobIds.contains(executorId))
 
-    val job = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values.head
+    val job = backend.jobClient.query(List(jobId).asJavaCollection).asScala.values.head
 
-    assert(backend.abortedJobIds.contains(job.getUUID))
-    assert(job.getCpus.toInt == 2)
+    assert(backend.abortedJobIds.contains(jobId))
+    assert(job.getCpus.toInt == 1)
 
     // force job status update
     backend.jobListener.onStatusUpdate(job)
 
     assert(backend.totalFailures == 0)
-    assert(backend.totalCoresRequested == 0)
+    assert(backend.totalCoresRequested == 2)
     assert(!backend.abortedJobIds.contains(job.getUUID))
   }
 
@@ -102,11 +104,19 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    val executorId = backend.executorsToJobIds.keySet.head
-    val executorIds = Seq(executorId)
+    val executorIds = backend.executorsToJobIds.keySet.toSeq
 
     backend.doKillExecutors(executorIds)
+
     assert(backend.executorsToJobIds.isEmpty)
+
+    val jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values
+
+    // force job status update
+    for (job <- jobs) backend.jobListener.onStatusUpdate(job)
+
+    assert(backend.abortedJobIds.isEmpty)
+    assert(backend.runningJobUUIDs.size == 0)
 
     assert(backend.doRequestTotalExecutors(0))
     assert(backend.executorLimit == 0)
@@ -118,7 +128,9 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.executorLimit == 2)
     assert(backend.totalFailures == 0)
 
-    assert(backend.runningJobUUIDs.size == 1)
+    backend.requestRemainingCores()
+
+    assert(backend.runningJobUUIDs.size == 2)
   }
 
   test("cook doesn't update executor-job mapping when aborting a job fails") {
