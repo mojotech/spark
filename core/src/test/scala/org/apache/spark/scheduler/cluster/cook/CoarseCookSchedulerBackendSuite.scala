@@ -36,7 +36,7 @@ import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SecurityMan
 
 import org.apache.spark.scheduler.cluster.cook
 
-import com.twosigma.cook.jobclient.{ JobClient, JobClientException }
+import com.twosigma.cook.jobclient.{ JobClient, Job, JobClientException }
 
 class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     with LocalSparkContext
@@ -79,10 +79,21 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     val executorId = backend.executorsToJobIds.keySet.head
     val executorIds = Seq(executorId)
 
+    assert(backend.runningJobUUIDs.size == 1)
     assert(backend.doKillExecutors(executorIds))
 
     assert(!backend.executorsToJobIds.contains(executorId))
+
+    val job = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values.head
+
+    assert(backend.abortedJobIds.contains(job.getUUID))
+    assert(job.getCpus.toInt == 2)
+
+    // force job status update
+    backend.jobListener.onStatusUpdate(job)
+
     assert(backend.totalFailures == 0)
+    assert(backend.totalCoresRequested == 0)
   }
 
   test("cook supports scaling executors down") {

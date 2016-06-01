@@ -119,6 +119,7 @@ private[spark] class CoarseCookSchedulerBackend(
 
   var runningJobUUIDs = Set[UUID]()
   var executorsToJobIds = HashMap[String, UUID]()
+  var abortedJobIds = Set[UUID]()
 
   private var jobLimitOption: Option[Int] = None
 
@@ -127,16 +128,29 @@ private[spark] class CoarseCookSchedulerBackend(
   val jobListener = new CJobListener {
     // These are called serially so don't need to worry about race conditions
     def onStatusUpdate(job : Job) {
-      if (job.getStatus == Job.Status.COMPLETED && !job.isSuccess) {
+      val isCompleted = job.getStatus == Job.Status.COMPLETED
+      val uuid = job.getUUID
+
+      if (isCompleted && !job.isSuccess) {
+        if (!abortedJobIds.contains(uuid)) {
+          totalFailures += 1
+          logWarning(s"Job ${job.getUUID} has died. Failure ($totalFailures/$maxFailures)")
+
+          if (totalFailures >= maxFailures) {
+            // TODO should we abort the outstanding tasks now?
+            logError(s"We have exceeded our maximum failures ($maxFailures)" +
+              "and will not relaunch any more tasks")
+          }
+        }
+
+        runningJobUUIDs = runningJobUUIDs - uuid
+      } else {
+        requestRemainingCores
+      }
+
+      if (isCompleted) {
         totalCoresRequested -= job.getCpus().toInt
-        totalFailures += 1
-        logWarning(s"Job ${job.getUUID} has died. Failure ($totalFailures/$maxFailures)")
-        runningJobUUIDs = runningJobUUIDs - job.getUUID
-        if (totalFailures >= maxFailures) {
-          // TODO should we abort the outstanding tasks now?
-          logError(s"We have exceeded our maximum failures ($maxFailures)" +
-                    "and will not relaunch any more tasks")
-        } else requestRemainingCores()
+        abortedJobIds = abortedJobIds - uuid
       }
     }
   }
@@ -237,7 +251,8 @@ private[spark] class CoarseCookSchedulerBackend(
 
     try {
       jobClient.abort(uuids.asJavaCollection)
-      for (executorId <- executorIds) { executorsToJobIds.remove(executorId) }
+      abortedJobIds = abortedJobIds ++ uuids
+      for (executorId <- executorIds) executorsToJobIds.remove(executorId)
     } catch {
       case e: JobClientException => logWarning("Failed to kill an executor")
     }
