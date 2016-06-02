@@ -119,13 +119,11 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.runningJobUUIDs.size == 0)
 
     assert(backend.doRequestTotalExecutors(0))
-    assert(backend.executorLimit == 0)
     assert(backend.totalFailures == 0)
 
     backend.requestRemainingCores()
 
     assert(backend.doRequestTotalExecutors(2))
-    assert(backend.executorLimit == 2)
     assert(backend.totalFailures == 0)
 
     backend.requestRemainingCores()
@@ -137,7 +135,6 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     backend.doKillExecutors(executorIds)
 
     assert(backend.doRequestTotalExecutors(1))
-    assert(backend.executorLimit == 1)
     assert(backend.totalFailures == 0)
 
     jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values

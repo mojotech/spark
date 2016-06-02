@@ -123,8 +123,6 @@ private[spark] class CoarseCookSchedulerBackend(
 
   private var jobLimitOption: Option[Int] = None
 
-  private[cook] def executorLimit: Int = jobLimitOption.getOrElse(Int.MaxValue)
-
   val jobListener = new CJobListener {
     // These are called serially so don't need to worry about race conditions
     def onStatusUpdate(job : Job) {
