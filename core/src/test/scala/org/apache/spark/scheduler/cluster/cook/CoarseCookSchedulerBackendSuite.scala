@@ -104,13 +104,13 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    val executorIds = backend.executorsToJobIds.keySet.toSeq
+    var executorIds = backend.executorsToJobIds.keySet.toSeq
 
     backend.doKillExecutors(executorIds)
 
     assert(backend.executorsToJobIds.isEmpty)
 
-    val jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values
+    var jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values
 
     // force job status update
     for (job <- jobs) backend.jobListener.onStatusUpdate(job)
@@ -131,6 +131,27 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     backend.requestRemainingCores()
 
     assert(backend.runningJobUUIDs.size == 2)
+    assert(backend.currentCoresLimit == 0)
+
+    executorIds = backend.executorsToJobIds.keySet.toSeq
+    backend.doKillExecutors(executorIds)
+
+    assert(backend.doRequestTotalExecutors(1))
+    assert(backend.executorLimit == 1)
+    assert(backend.totalFailures == 0)
+
+    jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values
+
+    // force job status update
+    for (job <- jobs) backend.jobListener.onStatusUpdate(job)
+
+    assert(backend.currentCoresLimit == 1)
+    assert(backend.abortedJobIds.isEmpty)
+
+    backend.requestRemainingCores()
+
+    assert(backend.currentCoresLimit == 0)
+    assert(backend.runningJobUUIDs.size == 1)
   }
 
   test("cook doesn't update executor-job mapping when aborting a job fails") {

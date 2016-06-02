@@ -130,9 +130,15 @@ private[spark] class CoarseCookSchedulerBackend(
     def onStatusUpdate(job : Job) {
       val isCompleted = job.getStatus == Job.Status.COMPLETED
       val uuid = job.getUUID
+      val isAborted = abortedJobIds.contains(uuid)
+
+      if (isCompleted) {
+        totalCoresRequested -= job.getCpus().toInt
+        abortedJobIds = abortedJobIds - uuid
+      }
 
       if (isCompleted && !job.isSuccess) {
-        if (!abortedJobIds.contains(uuid)) {
+        if (!isAborted) {
           totalFailures += 1
           logWarning(s"Job ${job.getUUID} has died. Failure ($totalFailures/$maxFailures)")
 
@@ -146,11 +152,6 @@ private[spark] class CoarseCookSchedulerBackend(
         runningJobUUIDs = runningJobUUIDs - uuid
       } else {
         requestRemainingCores
-      }
-
-      if (isCompleted) {
-        totalCoresRequested -= job.getCpus().toInt
-        abortedJobIds = abortedJobIds - uuid
       }
     }
   }
@@ -228,13 +229,18 @@ private[spark] class CoarseCookSchedulerBackend(
 
   def createRemainingJobs(): List[Job] = {
     def loop(coresRemaining: Int, jobs: List[Job]): List[Job] =
-      if (jobs.size == executorLimit) jobs
-      else
-        if (maxCoresPerJob <= 0) jobs
-        else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
-        else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
+      if (coresRemaining <= 0) jobs
+      else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
+      else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
 
-    loop(maxCores - totalCoresRequested, List()).reverse
+    loop(currentCoresLimit, List()).reverse
+  }
+
+  def currentCoresLimit(): Int = {
+    jobLimitOption match {
+      case Some(num) => num * maxCoresPerJob - totalCoresRequested
+      case None => maxCores - totalCoresRequested
+    }
   }
 
   def requestRemainingCores() : Unit = {
