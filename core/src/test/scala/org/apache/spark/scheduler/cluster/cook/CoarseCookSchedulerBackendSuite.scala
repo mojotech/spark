@@ -77,14 +77,11 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    val executorId = backend.executorsToJobIds.keySet.head
-    val jobId = backend.executorsToJobIds(executorId)
-    val executorIds = Seq(executorId)
+    val jobId = backend.runningJobUUIDs.head
+    val executorIds = Seq(jobId.toString)
 
     assert(backend.runningJobUUIDs.size == 3)
     assert(backend.doKillExecutors(executorIds))
-
-    assert(!backend.executorsToJobIds.contains(executorId))
 
     val job = backend.jobClient.query(List(jobId).asJavaCollection).asScala.values.head
 
@@ -104,11 +101,9 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    var executorIds = backend.executorsToJobIds.keySet.toSeq
+    var executorIds = backend.runningJobUUIDs.map(_.toString).toSeq
 
     backend.doKillExecutors(executorIds)
-
-    assert(backend.executorsToJobIds.isEmpty)
 
     var jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values
 
@@ -131,7 +126,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.runningJobUUIDs.size == 2)
     assert(backend.currentCoresLimit == 0)
 
-    executorIds = backend.executorsToJobIds.keySet.toSeq
+    executorIds = backend.runningJobUUIDs.map(_.toString).toSeq
     backend.doKillExecutors(executorIds)
 
     assert(backend.doRequestTotalExecutors(1))
@@ -151,8 +146,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.runningJobUUIDs.size == 1)
   }
 
-  test("cook doesn't update executor-job mapping when aborting a job fails") {
-    val execId = "ex1"
+  test("cook doesn't update aborted-jobs when aborting a job fails") {
     val jobId = UUID.randomUUID()
 
     val taskScheduler = mock[TaskSchedulerImpl]
@@ -167,9 +161,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
       override val jobClient = jobClientMock
     }
 
-    backend.executorsToJobIds(execId) = jobId
-
-    assert(backend.doKillExecutors(Seq(execId)))
-    assert(backend.executorsToJobIds.contains(execId))
+    assert(backend.doKillExecutors(Seq(jobId.toString)))
+    assert(!backend.abortedJobIds.contains(jobId))
   }
 }

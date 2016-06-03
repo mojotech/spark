@@ -118,7 +118,6 @@ private[spark] class CoarseCookSchedulerBackend(
   }
 
   var runningJobUUIDs = Set[UUID]()
-  var executorsToJobIds = HashMap[String, UUID]()
   var abortedJobIds = Set[UUID]()
 
   private var jobLimitOption: Option[Int] = None
@@ -220,8 +219,6 @@ private[spark] class CoarseCookSchedulerBackend(
       .setPriority(priority)
       .build()
 
-    executorsToJobIds(slaveId.toString + "/" + taskId.toString) = jobId
-
     job
   }
 
@@ -247,16 +244,16 @@ private[spark] class CoarseCookSchedulerBackend(
     totalCoresRequested += jobs.map(_.getCpus.toInt).sum
     runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
 
-    jobClient.submit(jobs.asJava, jobListener)
+    if (!jobs.isEmpty) jobClient.submit(jobs.asJava, jobListener)
   }
 
   override def doKillExecutors(executorIds: Seq[String]): Boolean = {
-    val uuids = executorIds.map(x => executorsToJobIds(x))
+    val uuids = executorIds.map(x => UUID.fromString(x))
 
     try {
+      logInfo(s"Aborting jobs: ${uuids}")
       jobClient.abort(uuids.asJavaCollection)
       abortedJobIds = abortedJobIds ++ uuids
-      for (executorId <- executorIds) executorsToJobIds.remove(executorId)
     } catch {
       case e: JobClientException => logWarning("Failed to kill an executor")
     }
