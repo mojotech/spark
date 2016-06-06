@@ -72,28 +72,15 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.isReady())
   }
 
-  test("cook supports killing executors") {
+  test("initial executors on start-up") {
     val taskScheduler = mock[TaskSchedulerImpl]
     when(taskScheduler.sc).thenReturn(sc)
 
     val backend = createSchedulerBackend(taskScheduler)
-    val jobId = backend.runningJobUUIDs.head
-    val executorIds = Seq(jobId.toString)
 
     assert(backend.runningJobUUIDs.size == 3)
-    assert(backend.doKillExecutors(executorIds))
-
-    val job = backend.jobClient.query(List(jobId).asJavaCollection).asScala.values.head
-
-    assert(backend.abortedJobIds.contains(jobId))
-    assert(job.getCpus.toInt == 1)
-
-    // force job status update
-    backend.jobListener.onStatusUpdate(job)
-
-    assert(backend.totalFailures == 0)
-    assert(backend.totalCoresRequested == 2)
-    assert(!backend.abortedJobIds.contains(job.getUUID))
+    assert(backend.currentCoresLimit == 0)
+    assert(backend.abortedJobIds.isEmpty)
   }
 
   test("cook supports scaling executors up & down") {
