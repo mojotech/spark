@@ -91,6 +91,7 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     var executorIds = backend.runningJobUUIDs.map(_.toString).toSeq
 
     backend.doKillExecutors(executorIds)
+    assert(backend.abortedJobIds == backend.runningJobUUIDs)
 
     var jobs = backend.jobClient.query(backend.runningJobUUIDs.asJavaCollection).asScala.values
 
