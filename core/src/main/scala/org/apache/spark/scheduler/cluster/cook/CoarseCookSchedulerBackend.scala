@@ -264,6 +264,7 @@ private[spark] class CoarseCookSchedulerBackend(
   override def doRequestTotalExecutors(requestedTotal: Int): Boolean = {
     logInfo("Capping the total amount of executors to " + requestedTotal)
     jobLimitOption = Some(requestedTotal)
+    requestRemainingCores
     true
   }
 

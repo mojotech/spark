@@ -116,12 +116,8 @@ class CoarseCookSchedulerBackendSuite extends SparkFunSuite
     assert(backend.doRequestTotalExecutors(0))
     assert(backend.totalFailures == 0)
 
-    backend.requestRemainingCores()
-
     assert(backend.doRequestTotalExecutors(2))
     assert(backend.totalFailures == 0)
-
-    backend.requestRemainingCores()
 
     assert(backend.runningJobUUIDs.size == 2)
     assert(backend.currentCoresLimit == 0)
