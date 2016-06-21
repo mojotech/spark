@@ -15,23 +15,28 @@
  * limitations under the License.
  */
 
-package org.apache.spark.scheduler
+package org.apache.spark.scheduler.cluster.cook
 
 import java.io.{ BufferedWriter, FileWriter }
 import java.net.URI
 import java.nio.file.{ Files, Paths }
-import java.util.UUID
+import java.util.{ UUID, List => JList }
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.HashMap
 
 import org.apache.mesos._
 import org.apache.mesos.Protos._
 
-import org.apache.spark.{Logging, SparkContext}
+import org.apache.spark.{ Logging, SparkContext }
+
+import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend
 import org.apache.spark.scheduler.cluster.mesos.CoarseMesosSchedulerBackend
 
-import com.twosigma.cook.jobclient.{Job, FetchableURI, JobClient, JobListener => CJobListener}
+import com.twosigma.cook.jobclient.{ Job, FetchableURI, JobClient, JobClientException, JobListener => CJobListener }
+
+import scala.util.{ Try, Success, Failure }
 
 object CoarseCookSchedulerBackend {
   def fetchUri(uri: String): String =
@@ -75,8 +80,11 @@ private[spark] class CoarseCookSchedulerBackend(
       // Here we roll existing logs
       @annotation.tailrec
       def findFirstFree(ct: Int = 0): Int =
-        if (Files.exists(path(ct))) findFirstFree(ct + 1)
-        else ct
+        if (Files.exists(path(ct))) {
+          findFirstFree(ct + 1)
+        } else {
+          ct
+        }
 
       @annotation.tailrec
       def rollin(ct: Int) {
@@ -97,7 +105,7 @@ private[spark] class CoarseCookSchedulerBackend(
     }
 
   // TODO do we need to do something smarter about the security manager?
-  val sparkMesosScheduler =
+  val mesosBackend =
     new CoarseMesosSchedulerBackend(scheduler, sc, "", sc.env.securityManager)
 
   val jobClient = {
@@ -115,20 +123,38 @@ private[spark] class CoarseCookSchedulerBackend(
   }
 
   var runningJobUUIDs = Set[UUID]()
+  var abortedJobIds = Set[UUID]()
+
+  // Set via dynamic-allocation when doRequestTotalExecutors is called to limit
+  // the number of jobs that the backend can create
+  private var jobLimit: Option[Int] = None
 
   val jobListener = new CJobListener {
     // These are called serially so don't need to worry about race conditions
     def onStatusUpdate(job : Job) {
-      if (job.getStatus == Job.Status.COMPLETED && !job.isSuccess) {
+      val uuid = job.getUUID
+      val isCompleted = job.getStatus == Job.Status.COMPLETED
+      val isAborted = abortedJobIds.contains(uuid)
+
+      if (isCompleted) {
         totalCoresRequested -= job.getCpus().toInt
-        totalFailures += 1
-        logWarning(s"Job ${job.getUUID} has died. Failure ($totalFailures/$maxFailures)")
-        runningJobUUIDs = runningJobUUIDs - job.getUUID
-        if (totalFailures >= maxFailures) {
-          // TODO should we abort the outstanding tasks now?
-          logError(s"We have exceeded our maximum failures ($maxFailures)" +
-                    "and will not relaunch any more tasks")
-        } else requestRemainingCores()
+        abortedJobIds = abortedJobIds - uuid
+        runningJobUUIDs = runningJobUUIDs - uuid
+
+        if (isAborted) { logInfo(s"Job $uuid has been successfuly aborted") }
+
+        if (!job.isSuccess && !isAborted) {
+          totalFailures += 1
+          logWarning(s"Job $uuid has died. Failure ($totalFailures/$maxFailures)")
+
+          if (totalFailures >= maxFailures) {
+            // TODO should we abort the outstanding tasks now?
+            logError(s"We have exceeded our maximum failures ($maxFailures)" +
+                       "and will not relaunch any more tasks")
+          } else {
+            requestRemainingCores
+          }
+        }
       }
     }
   }
@@ -137,18 +163,24 @@ private[spark] class CoarseCookSchedulerBackend(
     import CoarseCookSchedulerBackend.fetchUri
 
     val jobId = UUID.randomUUID()
+
     executorUuidWriter(jobId)
     logInfo(s"Creating job with id: $jobId")
+
+    val slaveId = SlaveID.newBuilder().setValue(jobId.toString)
+
     val fakeOffer = Offer.newBuilder()
       .setId(OfferID.newBuilder().setValue("Cook-id"))
       .setFrameworkId(FrameworkID.newBuilder().setValue("Cook"))
       .setHostname("$(hostname)")
-      .setSlaveId(SlaveID.newBuilder().setValue(jobId.toString))
+      .setSlaveId(slaveId)
       .build()
-    val taskId = sparkMesosScheduler.newMesosTaskId()
-    val commandInfo = sparkMesosScheduler.createCommand(fakeOffer, numCores, taskId)
+
+    val taskId = mesosBackend.newMesosTaskId()
+    val commandInfo = mesosBackend.createCommand(fakeOffer, numCores, taskId)
     val commandString = commandInfo.getValue
     val environmentInfo = commandInfo.getEnvironment
+
     // Note that it is critical to export these variables otherwise when
     // we invoke the spark scripts, our values will not be picked up
     val environment =
@@ -164,6 +196,7 @@ private[spark] class CoarseCookSchedulerBackend(
                        .build()
        }
     logDebug(s"command: $commandString")
+
     val remoteHdfsConf = conf.get("spark.executor.cook.hdfs.conf.remote", "")
     val remoteConfFetch = if (remoteHdfsConf.nonEmpty) {
       val name = Paths.get(remoteHdfsConf).getFileName
@@ -187,28 +220,48 @@ private[spark] class CoarseCookSchedulerBackend(
       .setEnv(environment.asJava)
       .setUris(uris.asJava)
       .setCommand(cmds.mkString("; "))
-      .setMemory(sparkMesosScheduler.calculateTotalMemory(sc))
+      .setMemory(mesosBackend.calculateTotalMemory(sc))
       .setCpus(numCores)
       .setPriority(priority)
       .build()
   }
 
   def createRemainingJobs(): List[Job] = {
+    @annotation.tailrec
     def loop(coresRemaining: Int, jobs: List[Job]): List[Job] =
-      if (coresRemaining <= 0) jobs
-      else if (coresRemaining <= maxCoresPerJob) createJob(coresRemaining) :: jobs
-      else loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
-    loop(maxCores - totalCoresRequested, Nil).reverse
+      if (coresRemaining <= 0) {
+        jobs
+      } else if (coresRemaining <= maxCoresPerJob) {
+        createJob(coresRemaining) :: jobs
+      } else {
+        loop(coresRemaining - maxCoresPerJob, createJob(maxCoresPerJob) :: jobs)
+      }
+    loop(currentCoresLimit, List()).reverse
   }
 
   def requestRemainingCores() : Unit = {
     val jobs = createRemainingJobs()
+
     totalCoresRequested += jobs.map(_.getCpus.toInt).sum
     runningJobUUIDs = runningJobUUIDs ++ jobs.map(_.getUUID)
-    jobClient.submit(jobs.asJava, jobListener)
+
+    if (!jobs.isEmpty) { jobClient.submit(jobs.asJava, jobListener) }
   }
 
-  // TODO we should consider making this async, because if there are issues with cook it'll
+  def currentCoresLimit(): Int =
+    jobLimit.map(_ * maxCoresPerJob).getOrElse(maxCores) - totalCoresRequested
+
+  override def doKillExecutors(executorIds: Seq[String]): Boolean =
+    abortJobs(executorIds.map(x => UUID.fromString(x)).toList)
+
+  override def doRequestTotalExecutors(requestedTotal: Int): Boolean = {
+    logInfo(s"Capping the total amount of executors to $requestedTotal")
+    jobLimit = Some(requestedTotal)
+    requestRemainingCores
+    true
+  }
+
+  // todo we should consider making this async, because if there are issues with cook it'll
   // just block the spark shell completely. We can block if they submit something (we don't
   // want to get into thread management issues)
   override def start() {
@@ -219,7 +272,20 @@ private[spark] class CoarseCookSchedulerBackend(
 
   override def stop() {
     super.stop()
-    jobClient.abort(runningJobUUIDs.asJava)
+    abortJobs(runningJobUUIDs.toList)
+  }
+
+  private def abortJobs(uuids: List[UUID]) : Boolean = {
+    logInfo(s"Aborting jobs: $uuids")
+
+    Try(jobClient.abort(uuids.asJavaCollection)) match {
+      case Success(v) =>
+        abortedJobIds = abortedJobIds ++ uuids.toSet
+        true
+      case Failure(e) =>
+        logWarning(s"Failed to kill an executor ${e.getMessage}")
+        false
+    }
   }
 
   private[this] val minExecutorsNecessary =
